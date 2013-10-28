@@ -1,0 +1,560 @@
+Alec Steep 8/27/13 tumor_sequencing Objective: To characterize abberations in DNA and RNA from NGS data from chickens hosting MDV.
+
+Samples were derived from line 6 by 7 F1 cross infected with MDV. Samples from bird number 5566 one sample from liver tumor and one sample from thymus tumor.
+
+Step 0: Acquisition of sequenced DNA reads from MDV+ chicken tumors (liver and thymus).
+
+
+fastqc_sickle_bowtie2_samtools_pipeline *check quality of reads with fastQC prior to running.
+
+Unzip each of the raw reads files: 5566_Liver_GCCAAT_L002_R1_001
+In [ ]:
+
+!gunzip 5566_Liver_GCCAAT_L002_R1_001.fastq.gz
+In [ ]:
+
+!gunzip 5566_Liver_GCCAAT_L002_R2_001.fastq.gz
+Step 1: Quality control
+
+
+Use the fastQC interface to open the sequenced read files: 5566_Liver_GCCAAT_L002_R1_001.fastq and 5566_Liver_GCCAAT_L002_R2_001.fastq, separetely. After fastQC runs the analysis we will examine different parameters of the data. The quality score should be atleast greater than 30 on average. It is always best to have a lower percentage of GC data; however, we are working with chicken DNA that has high GC content. Low N content is favorable. The sequence length distribution should average and peak at the expected read length. The sequence duplication should occur mostly between 1 and 2. There should be no overrepresented sequences. 
+ 
+
+Use sickle to trim reads based on quality score based on parameters:
+Flags:
+pe  paired-end sequence trimming
+sanger  quality scores were given in phred33
+-q 30--> Minimum quality score of 30
+-l 50--> minimum read length of 50 nucleotides
+ 
+"...read trimming is often applied to increase the number of mappable reads by removing bases at the end of the read that are likely to contain sequencing errors." -A beginners guide to SNP calling from high-throughput DNA-sequencing data 
+In [ ]:
+
+!sickle pe -f 5566_Liver_GCCAAT_L002_R1_001.fastq -r 5566_Liver_GCCAAT_L002_R2_001.fastq -t sanger -o 5566_Liver_GCCAAT_L002_R1_001_trimmed.fastq -p 5566_Liver_GCCAAT_L002_R2_001_trimmed.fastq -s 5566_Liver_GCCAAT_L002_R_trimmed_singles.fastq -q 30 -l 50
+
+Also consider using DynamicTrim module provided by SolexaQA if sickle trims seem problematic.
+
+Use fastQC interface again to open the now trimmed read files (singles included): 
+5566_Liver_GCCAAT_L002_R1_001_trimmed.fastq
+5566_Liver_GCCAAT_L002_R2_001_trimmed.fastq
+5566_Liver_GCCAAT_L002_R_trimmed_singles.fastq
+Examine each separate fastQC analysis based on the guidelines described above. 
+ 
+Step 2: Alignment/mapping
+
+
+#download assembled chrm files from NCBI [http://www.ncbi.nlm.nih.gov/assembly/317958/]
+
+Unzip chromosome assemblies (fast.a files)
+In [ ]:
+
+!gunzip *.fa.gz
+
+Concatenate the unzipped chromosome sequences into a single file
+In [ ]:
+
+!cat *.fa > galGal4_scaffolds_index.fa
+
+Build a bowtie2 index from the concatenated chromosome sequences
+    -bowtie2 is a Burrow-Wheeler transform (BWT) based alligner.
+        -Advantage: speed
+        -Disadvantage: "However, BWT algorithms are not as sensitive as hash-based aligners, and therefore may introduce mapping biases in regions with high variability (see Lunter and Goodson 2011 for a detailed sensitivity/specificity analysis)." 
+In [ ]:
+
+!bowtie2-build galGal4_scaffolds_index.fa galGal4_scaffolds_index
+
+Map trimmed reads on indexed galGal4 genome
+
+"In general, the choice of alignment tool and the corresponding settings significantly affect the outcome. This holds especially true for SNP calling, as wrongly aligned reads may result in artificial deviations from the reference. These deviations in turn may falsely be classified as SNPs in the downstream processing." -A beginners guide to SNP calling from high-throughput DNA-sequencing data
+    -Paper suggests using stampy as a good alternative
+
+-p 4--> 4 processors, -1 and -2 are the paired trimmed reads, -U are the trimmed single reads, -S is the output file name in SAM format
+In [ ]:
+
+!bowtie2 -p 4 -x galGal4_scaffolds_index -1 5566_Liver_GCCAAT_L002_R1_001_trimmed.fastq -2 5566_Liver_GCCAAT_L002_R2_001_trimmed.fastq -U 5566_Liver_GCCAAT_L002_R_trimmed_singles.fastq -S 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2
+ 
+
+Convert the SAM file (5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2) to BAM format via samtools. The SAM was converted to BAM to compact the file and allow it to be easily uploaded into Tablet visualizing software.
+ 
+
+#Flags:
+-S       input is SAM
+-b       output BAM
+In [ ]:
+
+!samtools view -Sb 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2 > 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.bam
+ 
+
+Sort the BAM formatted alignment file to better organize reads 
+In [ ]:
+
+!samtools sort 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.bam 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2_sort
+
+Index sorted BAM file
+In [ ]:
+
+!samtools index 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2_sort.bam
+ 
+
+The BAM file was run through samtools flagstat to check the alignment with a mapping statistic. The fraction of reads (and paired) successfully mapped to the reference is of interest.
+In [ ]:
+
+!samtools flagstat 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2_sort.bam
+Output:
+112397489 + 0 in total (QC-passed reads + QC-failed reads)
+0 + 0 duplicates
+106720903 + 0 mapped (94.95%:nan%)
+88762788 + 0 paired in sequencing
+44381394 + 0 read1
+44381394 + 0 read2
+81497480 + 0 properly paired (91.81%:nan%)
+83940334 + 0 with itself and mate mapped
+613539 + 0 singletons (0.69%:nan%)
+271792 + 0 with mate mapped to a different chr
+214167 + 0 with mate mapped to a different chr (mapQ>=5
+
+Take the indexed BAM file and run it through mpileup in samtools. 
+samtools mpileup [-EBug] [-C capQcoef] [-r reg] [-f in.fa] [-l list] [-M capMapQ] [-Q minBaseQ] [-q minMapQ] in.bam [in2.bam [...]]
+Generate BCF or pileup for one or multiple BAM files. Alignment records are grouped by sample identifiers in @RG header lines. If sample identifiers are absent, each input file is regarded as one sample.
+ 
+In the pileup format (without -uor-g), each line represents a genomic position, consisting of chromosome name, coordinate, reference base, read bases, read qualities and alignment mapping qualities. Information on match, mismatch, indel, strand, mapping quality and start and end of a read are all encoded at the read base column. At this column, a dot stands for a match to the reference base on the forward strand, a comma for a match on the reverse strand, a ’>’ or ’<’ for a reference skip, ‘ACGTN’ for a mismatch on the forward strand and ‘acgtn’ for a mismatch on the reverse strand. A pattern ‘\+[0-9]+[ACGTNacgtn]+’ indicates there is an insertion between this reference position and the next reference position. The length of the insertion is given by the integer in the pattern, followed by the inserted sequence. Similarly, a pattern ‘-[0-9]+[ACGTNacgtn]+’ represents a deletion from the reference. The deleted bases will be presented as ‘*’ in the following lines. Also at the read base column, a symbol ‘^’ marks the start of a read. The ASCII of the character following ‘^’ minus 33 gives the mapping quality. A symbol ‘$’ marks the end of a read segment.
+Input Options:
+-6   Assume the quality is in the Illumina 1.3+ encoding. -A Do not skip anomalous read pairs in variant calling.
+-B   Disable probabilistic realignment for the computation of base alignment quality (BAQ). BAQ is the Phred-scaled probability of a read base being misaligned. Applying this option greatly helps to reduce false SNPs caused by misalignments.
+-b FILE  List of input BAM files, one file per line [null]
+-C INT   Coefficient for downgrading mapping quality for reads containing excessive mismatches. Given a read with a phred-scaled probability q of being generated from the mapped position, the new mapping quality is about sqrt((INT-q)/INT)*INT. A zero value disables this functionality; if enabled, the recommended value for BWA is 50. [0]
+-d INT   At a position, read maximally INT reads per input BAM. [250]
+-E   Extended BAQ computation. This option helps sensitivity especially for MNPs, but may hurt specificity a little bit.
+-f FILE  The faidx-indexed reference file in the FASTA format. The file can be optionally compressed by razip. [null]
+-l FILE  BED or position list file containing a list of regions or sites where pileup or BCF should be generated [null]
+-q INT   Minimum mapping quality for an alignment to be used [0]
+-Q INT   Minimum base quality for a base to be considered [13]
+-r STR   Only generate pileup in region STR [all sites]
+Output Options:
+    
+-D   Output per-sample read depth
+-g   Compute genotype likelihoods and output them in the binary call format (BCF).
+-S   Output per-sample Phred-scaled strand bias P-value
+-u   Similar to -g except that the output is uncompressed BCF, which is preferred for piping.
+Options for Genotype Likelihood Computation (for -g or -u):
+    
+-e INT   Phred-scaled gap extension sequencing error probability. Reducing INT leads to longer indels. [20]
+-h INT   Coefficient for modeling homopolymer errors. Given an l-long homopolymer run, the sequencing error of an indel of size s is modeled as INT*s/l. [100]
+-I   Do not perform INDEL calling
+-L INT   Skip INDEL calling if the average per-sample depth is above INT. [250]
+-o INT   Phred-scaled gap open sequencing error probability. Reducing INT leads to more indel calls. [40]
+-P STR   Comma dilimited list of platforms (determined by @RG-PL) from which indel candidates are obtained. It is recommended to collect indel candidates from sequencing technologies that have low indel error rate such as ILLUMINA. [all]
+
+Pipe the mpileup file to bcftools view, which actually does the SNP calling. 
+bcftools view [-AbFGNQSucgv] [-D seqDict] [-l listLoci] [-s listSample] [-i gapSNPratio] [-t mutRate] [-p varThres] [-P prior] [-1 nGroup1] [-d minFrac] [-U nPerm] [-X permThres] [-T trioType] in.bcf [region]
+Convert between BCF and VCF, call variant candidates and estimate allele frequencies.
+ 
+Input/Output Options: 
+-A   Retain all possible alternate alleles at variant sites. By default, the view command discards unlikely alleles.
+-b   Output in the BCF format. The default is VCF.
+-D FILE  Sequence dictionary (list of chromosome names) for VCF->BCF conversion [null]
+-F   Indicate PL is generated by r921 or before (ordering is different).
+-G   Suppress all individual genotype information.
+-l FILE  List of sites at which information are outputted [all sites]
+-N   Skip sites where the REF field is not A/C/G/T
+-Q   Output the QCALL likelihood format
+-s FILE  List of samples to use. The first column in the input gives the sample names and the second gives the ploidy, which can only be 1 or 2. When the 2nd column is absent, the sample ploidy is assumed to be 2. In the output, the ordering of samples will be identical to the one in FILE. [null]
+-S   The input is VCF instead of BCF.
+-u   Uncompressed BCF output (force -b).
+Consensus/Variant Calling Options: 
+-c   Call variants using Bayesian inference. This option automatically invokes option -e.
+-d FLOAT     When -v is in use, skip loci where the fraction of samples covered by reads is below FLOAT. [0]
+-e   Perform max-likelihood inference only, including estimating the site allele frequency, testing Hardy-Weinberg equlibrium and testing associations with LRT.
+-g   Call per-sample genotypes at variant sites (force -c)
+-i FLOAT     Ratio of INDEL-to-SNP mutation rate [0.15]
+-p FLOAT     A site is considered to be a variant if P(ref|D)<FLOAT [0.5]
+-P STR   Prior or initial allele frequency spectrum. If STR can be full, cond2, flat or the file consisting of error output from a previous variant calling run.
+-t FLOAT     Scaled muttion rate for variant calling [0.001]
+-T STR   Enable pair/trio calling. For trio calling, option -s is usually needed to be applied to configure the trio members and their ordering. In the file supplied to the option -s, the first sample must be the child, the second the father and the third the mother. The valid values of STR are ‘pair’, ‘trioauto’, ‘trioxd’ and ‘trioxs’, where ‘pair’ calls differences between two input samples, and ‘trioxd’ (‘trioxs’) specifies that the input is from the X chromosome non-PAR regions and the child is a female (male). [null]
+-v   Output variant sites only (force -c)
+Contrast Calling and Association Test Options: 
+-1 INT   Number of group-1 samples. This option is used for dividing the samples into two groups for contrast SNP calling or association test. When this option is in use, the following VCF INFO will be outputted: PC2, PCHI2 and QCHI2. [0]
+-U INT   Number of permutations for association test (effective only with -1) [0]
+-X FLOAT     Only perform permutations for P(chi^2)<FLOAT (effective only with -U) [0.01]
+In [ ]:
+
+!samtools mpileup -uD -f galGal4_scaffolds_index.fasta 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2_sort.bam | bcftools view -bvcg - > samtools_mpileup_bcftools_Liver_galGal4.raw.cf
+ 
+
+Convert the BCF file to a VCF file (flat text as apposed to binary). Pipe the VCF into vcfutils.pl.
+The vcfutils.pl script, bundled with bcftools inside SAMTools can provide useful stats and can perform some filtering of VCFs by specific criteria.
+vcfutils.pl is used to filter down the list of candidates according to some set of objective criteria.
+*FIND vcfutils.pl flags
+In [ ]:
+
+!bcftools view samtools_mpileup_bcftools_Liver_galGal4.raw.cf | vcfutils.pl varFilter > samtools_mpileup_bcftools_Liver_galGal4.vcf
+
+Visualize output with less.
+In [ ]:
+
+!less samtools_mpileup_bcftools_Liver_galGal4.vcf
+ 
+
+Create a sequence .dict file from the reference .fa or .fasta file type. The .dict file will be more compatibale with GATK (through java). Note: command may need to be altered based on file label (.fa or .fasta).
+-Xmx3g will increase heap space by 3GB (needed on this machine).
+In [ ]:
+
+!java -Xmx3g -jar CreateSequenceDictionary.jar R= galGal4_scaffolds_index.fa O= galGal4_scaffolds_index.dict
+
+Run picard tools in order to add readgroups to the 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.bam file. Read groups are needed in order for GTAK to run properly. 
+File that allows for this command: AddOrReplaceReadGroups.jar
+I= The input file read groups will be added to.
+O= The name of the output file with the read groups.
+SORT_ORDER=SortOrder    Optional sort order to output in. If not supplied OUTPUT is in the same order as INPUT. Default value: null. Possible values: {unsorted, queryname, coordinate}
+RGID=String Read Group ID Default value: 1. This option can be set to 'null' to clear the default value.
+RGLB=String Read Group Library Required.
+RGPL=String Read Group platform (e.g. illumina, solid) Required.
+RGPU=String Read Group platform unit (eg. run barcode) Required.
+RGSM=String Read Group sample name Required.
+RGCN=String Read Group sequencing center name Default value: null.
+RGDS=String Read Group description Default value: null.
+RGDT=Iso8601Date    Read Group run date Default value: null.
+RGPI=Integer    Read Group predicted insert size Default value: null.
+SEQUENCE_DICTIONARY=File    The index sequence dictionary (required if CREATE_INDEX=true) Default value: null. --This tells us that we will use a dictionary file for our reference.
+VALIDATION_STRINGENCY=ValidationStringency  Validation stringency for all SAM files read by this program. Setting stringency to SILENT can improve performance when processing a BAM file in which variable-length data (read, qualities, tags) do not otherwise need to be decoded. Default value: STRICT. This option can be set to 'null' to clear the default value. Possible values: {STRICT, LENIENT, SILENT}.
+In [ ]:
+
+!java -Xmx3g -jar /Users/alec/Desktop/picard-tools-1/picard-tools-1.98/AddOrReplaceReadGroups.jar I= 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.bam O= 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.withheader.bam SORT_ORDER=coordinate RGID=5566 RGLB=5566 RGPL=illumina RGPU=5566 RGSM=5566 CREATE_INDEX=True VALIDATION_STRINGENCY=LENIENT
+
+Put the 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.withheader.bam through GATK to call for SNPs against the reference galGal4_scaffolds_index.fasta file. 
+-Xmx3g grants more memory for process.
+-T tells us what tool we want to use. UnifiedGenotyper in this case.
+-R is the reference genome file
+-I is the input BAM reads file
+-o is the output file
+-dfrac FIGURE OUT THIS FLAG
+-nt is the number of cores used
+In [ ]:
+
+!java -Xmx3g -jar /usr/local/bin/GenomeAnalysisTK.jar -T UnifiedGenotyper -R galGal4_scaffolds_index.fasta -I 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.withheader.bam -o 5566_liver_snp_analysis_GATK.vcf -dt ALL_READS -out_mode EMIT_VARIANTS_ONLY  -dfrac 1.0 -nt 6
+ 
+
+OUTPUT:
+INFO  13:03:07,740 ProgressMeter -            done        1.00e+09   64.3 m        3.0 s    100.0%        64.3 m     0.0 s 
+INFO  13:03:07,741 ProgressMeter - Total runtime 3860.33 secs, 64.34 min, 1.07 hours 
+INFO  13:03:07,741 MicroScheduler - 886634 reads were filtered out during traversal out of 107922126 total (0.82%) 
+INFO  13:03:07,741 MicroScheduler -   -> 273148 reads (0.25% of total) failing BadMateFilter 
+INFO  13:03:07,741 MicroScheduler -   -> 613486 reads (0.57% of total) failing UnmappedReadFilter 
+INFO  13:03:14,504 GATKRunReport - Uploaded run statistics report to AWS S3 
+In [ ]:
+
+!java -Xmx4g -jar /usr/local/bin/GenomeAnalysisTK.jar -T UnifiedGenotyper -R galGal4_scaffolds_index.fasta -I 5566_Liver_GCCAAT_L002_trimmed_galGal4_scaffolds_index_bt2.withheader.bam -o 5566_liver_snp_analysis_GATK_filtered.vcf -dt ALL_READS -out_mode EMIT_VARIANTS_ONLY -stand_call_conf 50.0 -stand_emit_conf 10.0 -dfrac 1.0 -nt 8
+ 
+
+*This command uses an extra flag: "stand_emit_conf 10.0" that better filters our data... somehow (FIX)
+ 
+OUTPUT:
+INFO  17:39:10,596 ProgressMeter -            done        1.00e+09   58.3 m        3.0 s    100.0%        58.3 m     0.0 s 
+INFO  17:39:10,597 ProgressMeter - Total runtime 3499.51 secs, 58.33 min, 0.97 hours 
+INFO  17:39:10,597 MicroScheduler - 886608 reads were filtered out during traversal out of 107922116 total (0.82%) 
+INFO  17:39:10,597 MicroScheduler -   -> 273156 reads (0.25% of total) failing BadMateFilter 
+INFO  17:39:10,597 MicroScheduler -   -> 613452 reads (0.57% of total) failing UnmappedReadFilter 
+INFO  17:39:12,904 GATKRunReport - Uploaded run statistics report to AWS S3 
+
+The SNPs were further filtered with GATK with a quality score of 50 or higher. Specific fields were then selected for with awk. 
+In [ ]:
+
+!java -Xmx4g -jar /usr/local/bin/GenomeAnalysisTK.jar -T VariantFiltration -R galGal4_scaffolds_index.fasta -o 5566_liver_snp_analysis_GATK_filtered_1.vcf --variant 5566_liver_snp_analysis_GATK.vcf --filterExpression "QUAL < 50.00" --filterName "FAIL" 
+!grep "PASS" 5566_liver_snp_analysis_GATK_filtered_1.vcf > 5566_liver_snp_analysis_GATK_filtered_1_PASS.vcf
+!awk -F " " '{print $1, $2, $4, $5, $10, $11}' 5566_liver_snp_analysis_GATK_filtered_1_PASS.vcf > 5566_liver_snp_analysis_GATK_filtered_1_PASS_grep_awk.vcf
+
+Downloaded .txt files that contained SNP data for lines 6 and 7 in reference to galGal3. 
+Line 6: 63_with_frequency_extract_parse_majorAlleleFreq66.txt
+Line 7: 72_with_frequency_extract_parse_majorAlleleFreq66.txt
+
+We then took these files and reformated them to bed format (still saved as .txt files) manually with the help of an awk script with reference to a table.
+ 
+A list (galgal3_name_table.txt) was created with chromosome names copied from UCSC's galgal3 table at 'https://genome.ucsc.edu/cgi-bin/hgTracks?hgsid=347771961&chromInfoPage='.
+
+The command below collates the unique chromosome field names from the ONE of the .txt files into a list.
+*THE OUTPUT WAS MANUALLY CORRECTED FOR SEVERAL MISSING NAMES RELATIVE TO THE FILE CREATED ON THE UCSC NAMES, USING TEXTWRANGLER.*
+In [ ]:
+
+!awk '{print $1}' 72_with_frequency_extract_parse_majorAlleleFreq66.txt | sort | uniq > ./cari/old_galgal3_names.txt
+
+The command below sorts the list with the UCSC chromosome names similarly to the collated names from the .txt file.
+In [ ]:
+
+!awk '{print $1}' ./cari/galgal3_name_table.txt | sort | uniq > ./cari/new_galgal3_names.txt
+ 
+
+The paste command below creates a 2-dimensional array from the above two lists.
+In [ ]:
+
+!paste ./cari/old_galgal3_names.txt ./cari/new_galgal3_names.txt > galgal3_name_array.txt
+ 
+
+Ran /bin/bash rename.sh on Line 7 SNP file.  This script contains the below script.  It replaces values in field 1 shared in the input file and array with field 2 in the array (in plain English, it replaces the original nomenclature with the UCSC expected chromosome names.)
+In [ ]:
+
+!#!/bin/sh
+#search and replace fields from a 1-to-1 array
+awk '
+    FNR == NR {
+        assoc[ $1 ] = $2;
+        next;
+    }
+    FNR < NR {
+        if ( $1 in assoc ) {
+            $1 = assoc[ $1 ]
+        }
+        print
+    }
+' galgal3_name_array.txt 72_with_frequency_extract_parse_majorAlleleFreq66.txt > 72_alleles_rename.txt
+
+OUTPUT of a head command:
+head 72_alleles_rename.txt 
+chr12_random 23 A C 100
+chr12_random 3682 A C 100
+chr12_random 4868 G C 100
+chr12_random 5504 T C 100
+chr12_random 6504 G A 100
+chr12_random 6843 A G 100
+chr12_random 6844 A G/A 83.333 16.667
+chr18_random 2473 A G 100
+chr18_random 2524 A G 100
+chr18_random 2766 T C 100
+ 
+
+Used awk to make a "end" field, similarly to a BED file, and choose which other fields to keep.
+In [ ]:
+
+!awk '{ print $1, $2, $2, $3, $4 }' 72_alleles_rename.txt > 72_alleles_rename_start_end_numbers.txt
+ 
+
+Used awk to add a value of one to field 3 so that liftOver will run correctly.
+In [ ]:
+
+!awk '{print $1, $2, $3+1, $4, $5}' 72_alleles_rename_start_end_numbers.txt > 72_alleles_rename_start_end_numbers_tabs.txt
+
+We ran the adjusted .txt file (72_alleles_rename_start_end_numbers_tabs.txt) through liftOver with the chain file:galGal3ToGalGal4.over.chain. This produced two files: one remapped and one unmapped. The purpose was to change the SNP reference from galGal3 to galGal4. 
+In [ ]:
+
+!/Volumes/Macintosh\ HD3/Alec/Documents/tumor\ sequencing/sequences/liftOver 72_alleles_rename_start_end_numbers_tabs.txt galGal3ToGalGal4.over.chain 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped.txt 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_unMapped.txt
+
+OUTPUT:
+Reading liftover chains
+Mapping coordinates
+ 
+Head of remapped file:
+head 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped.txt 
+chr12   14966001    14966002    A   C
+chr12   14967187    14967188    G   C
+chr12   14967816    14967817    T   C
+chr12   14968816    14968817    G   A
+chr12   14969156    14969157    A   G/A
+chr18   595907  595908  A   G
+chr18   595958  595959  A   G
+chr18   596200  596201  T   C
+chr18   596473  596474  A   G/A
+chr18   597966  597967  A   C
+
+In order to tract which the origin and fate of each SNP, field 4 was replaced with an interger value and field 5 was erased. 
+In [ ]:
+
+!awk '{print $1, $2, $3, NR}' 72_alleles_rename_start_end_numbers_tabs.txt > 72_alleles_rename_start_end_numbers_tabs_key.txt
+
+more 72_alleles_rename_start_end_numbers_tabs_key.txt 
+chr12_random 23 24 1
+chr12_random 3682 3683 2
+chr12_random 4868 4869 3
+chr12_random 5504 5505 4
+chr12_random 6504 6505 5
+chr12_random 6843 6844 6
+chr12_random 6844 6845 7
+chr18_random 2473 2474 8
+chr18_random 2524 2525 9
+chr18_random 2766 2767 10
+chr18_random 3039 3040 11
+chr18_random 4532 4533 12
+chr18_random 4711 4712 13
+chr18_random 4721 4722 14
+chr18_random 5437 5438 15
+chr18_random 5531 5532 16
+chr18_random 5558 5559 17
+chr18_random 5920 5921 18
+chr18_random 5981 5982 19
+chr18_random 6138 6139 20
+chr18_random 6241 6242 21
+chr18_random 6390 6391 22
+chr18_random 6454 6455 23
+chr18_random 6651 6652 24
+chr18_random 6653 6654 25
+chr18_random 6934 6935 26
+chr18_random 7328 7329 27
+chr18_random 7584 7585 28
+chr18_random 7663 7664 29
+chr18_random 8839 8840 30
+
+The new file more 72_alleles_rename_start_end_numbers_tabs_key.txt was run through liftOver in order to track the intergers that represent the SNPs. 
+In [ ]:
+
+!/Volumes/Macintosh\ HD3/Alec/Documents/tumor\ sequencing/sequences/liftOver 72_alleles_rename_start_end_numbers_tabs_key.txt galGal3ToGalGal4.over.chain 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped_key.txt 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_unMapped_key.txt
+
+The inout and output files were 'headed' to illustrate the path of the intergers (AKA SNPs)
+
+head 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped_key.txt 
+chr12   14966001    14966002    2
+chr12   14967187    14967188    3
+chr12   14967816    14967817    4
+chr12   14968816    14968817    5
+chr12   14969156    14969157    7
+chr18   595907  595908  8
+chr18   595958  595959  9
+chr18   596200  596201  10
+chr18   596473  596474  11
+chr18   597966  597967  12
+ 
+head 72_with_frequency_extract_parse_majorAlleleFreq66_galGal4_unMapped_key.txt 
+#Deleted in new
+chr12_random    23  24  1
+#Deleted in new
+chr12_random    6843    6844    6
+#Deleted in new
+chr18_random    11854   11855   40
+#Deleted in new
+chr18_random    11864   11865   41
+#Deleted in new
+chr18_random    11876   11877   42
+ 
+head 72_alleles_rename_start_end_numbers_tabs_key.txt
+chr12_random 23 24 1
+chr12_random 3682 3683 2
+chr12_random 4868 4869 3
+chr12_random 5504 5505 4
+chr12_random 6504 6505 5
+chr12_random 6843 6844 6
+chr12_random 6844 6845 7
+chr18_random 2473 2474 8
+chr18_random 2524 2525 9
+chr18_random 2766 2767 10
+ 
+
+The awk adjustments and liftOver conversion from galGal3 to galGal4 was repeated on the line 6 SNP data 
+In [ ]:
+
+!/bin/bash rename.sh
+ 
+#!/bin/sh
+#search and replace fields from a 1-to-1 array
+awk '
+    FNR == NR {
+        assoc[ $1 ] = $2;
+        next;
+    }
+    FNR < NR {
+        if ( $1 in assoc ) {
+            $1 = assoc[ $1 ]
+        }
+        print
+    }
+' galgal3_name_array.txt 63_with_frequency_extract_parse_majorAlleleFreq66.txt > 63_alleles_rename.txt
+ 
+!awk '{ print $1, $2, $2, $3, $4 }' 63_alleles_rename.txt > 63_alleles_rename_start_end_numbers.txt
+!awk '{print $1, $2, $3+1, $4, $5}' 63_alleles_rename_start_end_numbers.txt > 63_alleles_rename_start_end_numbers_tabs.txt
+!/Volumes/Macintosh\ HD3/Alec/Documents/tumor\ sequencing/sequences/liftOver 63_alleles_rename_start_end_numbers_tabs.txt galGal3ToGalGal4.over.chain 63_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped.txt 63_with_frequency_extract_parse_majorAlleleFreq66_galGal4_unMapped.txt
+!awk '{print $1, $2, $3, NR}' 63_alleles_rename_start_end_numbers_tabs.txt > 63_alleles_rename_start_end_numbers_tabs_key.txt
+!/Volumes/Macintosh\ HD3/Alec/Documents/tumor\ sequencing/sequences/liftOver 63_alleles_rename_start_end_numbers_tabs_key.txt galGal3ToGalGal4.over.chain 63_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped_key.txt 63_with_frequency_extract_parse_majorAlleleFreq66_galGal4_unMapped_key.txt
+
+head 63_with_frequency_extract_parse_majorAlleleFreq66_galGal4_remapped_key.txt 
+chr17   3985480 3985481 1
+chr12   14968036    14968037    2
+chr12   14968719    14968720    3
+chr12   14969156    14969157    5
+chr18   595907  595908  6
+chr18   595958  595959  7
+chr18   596200  596201  8
+chr18   597966  597967  9
+chr18   598145  598146  10
+chr18   598155  598156  11
+ 
+head 63_with_frequency_extract_parse_majorAlleleFreq66_galGal4_unMapped_key.txt
+#Deleted in new
+chr12_random    6843    6844    4
+#Deleted in new
+chr18_random    11854   11855   36
+#Deleted in new
+chr18_random    11864   11865   37
+#Deleted in new
+chr10_random    9417    9418    86
+#Deleted in new
+chr5_random 7232    7233    129
+ 
+head 63_alleles_rename_start_end_numbers_tabs_key.txt
+chr17_random 113 114 1
+chr12_random 5724 5725 2
+chr12_random 6407 6408 3
+chr12_random 6843 6844 4
+chr12_random 6844 6845 5
+chr18_random 2473 2474 6
+chr18_random 2524 2525 7
+chr18_random 2766 2767 8
+chr18_random 4532 4533 9
+chr18_random 4711 4712 10
+ 
+
+Put these steps into a Bash script for automation. This is for running the thymus.  
+
+tumor='5566_Thymus_CTTGTA_L002'
+ 
+gunzip $tumor'_R1_001.fastq.gz' 
+gunzip $tumor'_R2_001.fastq.gz'
+#Use the fastQC interface to open the sequenced read files: 5566_Thymus_CTTGTA_L002_R1_001.fastq and 5566_Thymus_CTTGTA_L002_R2_001.fastq, separetely.
+sickle pe -f $tumor'_R1_001.fastq' -r $tumor'_R2_001.fastq' -t sanger -o $tumor'_R1_001_trimmed.fastq' -p $tumor'_R2_001_trimmed.fastq' -s $tumor'_R_trimmed_singles.fastq' -q 30 -l 50
+#Use fastQC interface again to open the now trimmed read files (singles included): 5566_Thymus_CTTGTA_L002_R1_001_trimmed.fastq, 5566_Thymus_CTTGTA_L002_R2_001_trimmed.fastq, 5566_Thymus_CTTGTA_L002_R_trimmed_singles.fastq.
+#download assembled chrm files from NCBI [http://www.ncbi.nlm.nih.gov/assembly/317958/]
+gunzip *.fa.gz
+cat *.fa > galGal4_scaffolds_index.fa
+bowtie2-build galGal4_scaffolds_index.fa galGal4_scaffolds_index
+bowtie2 -p 4 -x galGal4_scaffolds_index -1 $tumor'_R1_001_trimmed.fastq' -2 $tumor'_R2_001_trimmed.fastq' -U $tumor'_R_trimmed_singles.fastq' -S $tumor'_trimmed_galGal4_scaffolds_index_bt2'
+samtools view -Sb $tumor'_trimmed_galGal4_scaffolds_index_bt2' > $tumor'_trimmed_galGal4_scaffolds_index_bt2.bam'
+samtools sort $tumor'_trimmed_galGal4_scaffolds_index_bt2.bam' $tumor'_trimmed_galGal4_scaffolds_index_bt2_sort'
+samtools index $tumor'_trimmed_galGal4_scaffolds_index_bt2_sort.bam'
+samtools flagstat $tumor'_trimmed_galGal4_scaffolds_index_bt2_sort.bam'
+#subset of Thymus_SNPcall_samtools_GATK.sh
+java -Xmx3g -jar /usr/local/bin/GenomeAnalysisTK.jar -T UnifiedGenotyper -R galGal4_scaffolds_index.fasta -I $tumor'_trimmed_galGal4_scaffolds_index_bt2.withheader.bam' -o $tumor'_snp_analysis_GATK.vcf' -dt ALL_READS -out_mode EMIT_VARIANTS_ONLY -dfrac 1.0 -nt 8
+java -Xmx4g -jar /usr/local/bin/GenomeAnalysisTK.jar -T VariantFiltration -R galGal4_scaffolds_index.fasta -o $tumor'_snp_analysis_GATK_filtered_1.vcf' --variant $tumor'_snp_analysis_GATK.vcf' --filterExpression "QUAL < 50.00" --filterName "FAIL" 
+grep "PASS" $tumor'_snp_analysis_GATK_filtered_1.vcf' > $tumor'_snp_analysis_GATK_filtered_1_PASS.vcf'
+awk -F " " '{print $1, $2, $4, $5, $10, $11}' $tumor'_snp_analysis_GATK_filtered_1_PASS.vcf' > $tumor'_snp_analysis_GATK_filtered_1_PASS_grep_awk.vcf'
+ 
+In [ ]:
+
+Various tests outside of the direct pipeline
+!samtools flagstat 5566_Thymus_CTTGTA_L002_trimmed_galGal4_scaffolds_index_bt2_sort.bam
+131227280 + 0 in total (QC-passed reads + QC-failed reads)
+0 + 0 duplicates
+125622801 + 0 mapped (95.73%:nan%)
+104548394 + 0 paired in sequencing
+52274197 + 0 read1
+52274197 + 0 read2
+97273336 + 0 properly paired (93.04%:nan%)
+99656182 + 0 with itself and mate mapped
+659624 + 0 singletons (0.63%:nan%)
+399162 + 0 with mate mapped to a different chr
+329639 + 0 with mate mapped to a different chr (mapQ>=5)
+
+Put these steps into a Bash script four automation with use of variable.
+
+tumor='5566_Thymus_CTTGTA_L002'
+ 
+gunzip $tumor'_R1_001.fastq.gz' 
+gunzip $tumor'_R2_001.fastq.gz'
+#figure out fast qc
+sickle pe -f $tumor'_R1_001.fastq' -r $tumor'_R2_001.fastq' -t sanger -o $tumor'_R1_001_trimmed.fastq' -p $tumor'_R2_001_trimmed.fastq' -s $tumor'_R_trimmed_singles.fastq' -q 30 -l 50
+#download assembled chrm files from NCBI [http://www.ncbi.nlm.nih.gov/assembly/317958/]
+#gunzip *.fa.gz
+#cat *.fa > galGal4_scaffolds_index.fa
+#bowtie2-build galGal4_scaffolds_index.fa galGal4_scaffolds_index
+bowtie2 -p 4 -x galGal4_scaffolds_index -1 $tumor'_R1_001_trimmed.fastq' -2 $tumor'_R2_001_trimmed.fastq' -U $tumor'_R_trimmed_singles.fastq' -S $tumor'_trimmed_galGal4_scaffolds_index_bt2'
+samtools view -Sb $tumor'_trimmed_galGal4_scaffolds_index_bt2' > $tumor'_trimmed_galGal4_scaffolds_index_bt2.bam'
+samtools sort $tumor'_trimmed_galGal4_scaffolds_index_bt2.bam' $tumor'_trimmed_galGal4_scaffolds_index_bt2_sort'
+samtools index $tumor'_trimmed_galGal4_scaffolds_index_bt2_sort.bam'
+ 
+In [ ]:
+
+ 
